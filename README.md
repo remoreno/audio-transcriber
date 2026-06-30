@@ -15,7 +15,7 @@ No cloud APIs. No internet required after the initial model download.
 - **Windows 10 or later**
 - **Python 3.11+**
 - **ffmpeg** on your system PATH
-- **NVIDIA GPU + CUDA Toolkit 12.x + cuDNN 9.x** (optional, for GPU acceleration)
+- **NVIDIA GPU + current NVIDIA drivers** (optional, for GPU acceleration)
 
 ---
 
@@ -76,15 +76,42 @@ GPU acceleration is **optional**. The app works on CPU out of the box. If you ha
 
 Make sure you have up-to-date NVIDIA drivers from [nvidia.com/drivers](https://www.nvidia.com/drivers).
 
-### 3.2 Install CUDA Toolkit 12.x
+Verify that Windows can see the GPU:
+
+```
+nvidia-smi
+```
+
+You should see your NVIDIA GPU listed.
+
+### 3.2 Install Python GPU Runtime Packages
+
+The project dependencies include `faster-whisper`, CTranslate2, cuDNN, and the CUDA 12 cuBLAS runtime package used for GPU inference on Windows.
+
+Install or update the project dependencies:
+
+```
+venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+If you use `uv`, install the dependencies into the project environment first:
+
+```
+uv pip install -r requirements.txt
+```
+
+### 3.3 Optional: Install CUDA Toolkit 12.x
+
+Installing the full CUDA Toolkit is optional for this app if the Python runtime packages are installed. The app can load CUDA runtime DLLs directly from the virtual environment.
 
 1. Download and install from the [CUDA Toolkit Archive](https://developer.nvidia.com/cuda-toolkit-archive). Any CUDA 12.x release works (e.g. 12.6, 12.8, 12.9).
 2. During installation, the default options are fine.
 3. The installer typically sets the `CUDA_PATH` environment variable automatically (e.g. `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9`).
 
-### 3.3 Install cuDNN 9.x
+### 3.4 Optional: Install cuDNN 9.x
 
-cuDNN is required by CTranslate2 for GPU inference.
+cuDNN is required by CTranslate2 for GPU inference. The current Python dependencies already provide cuDNN for the app, so this manual step is only needed if you are managing CUDA libraries outside the virtual environment.
 
 1. Download cuDNN 9.x for CUDA 12 from [developer.nvidia.com/cudnn-downloads](https://developer.nvidia.com/cudnn-downloads) (requires a free NVIDIA developer account).
 2. Install using the provided installer, or extract and copy the files into your CUDA Toolkit directory:
@@ -92,25 +119,35 @@ cuDNN is required by CTranslate2 for GPU inference.
    - `include\*.h` → `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x\include\`
    - `lib\x64\*.lib` → `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x\lib\x64\`
 
-### 3.4 Environment Variables
+### 3.5 Environment Variables
 
-The app auto-detects the CUDA Toolkit location in this order:
+The app auto-detects CUDA runtime DLLs in this order:
 
-1. `CUDA_PATH` environment variable (set by the CUDA installer)
+1. `CUDA_PATH` environment variable (set by the CUDA Toolkit installer)
 2. `CUDA_HOME` environment variable
-3. Default path: `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x`
+3. Default CUDA Toolkit path: `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x`
+4. CTranslate2 DLLs bundled in the active Python environment
+5. NVIDIA runtime packages installed in the active Python environment, such as `nvidia-cublas-cu12`
 
-If the CUDA installer set `CUDA_PATH` correctly, no extra configuration is needed.
+If you installed dependencies with `pip install -r requirements.txt`, no extra CUDA environment variable is normally needed.
 
-> **Note on Python 3.8+ and DLL loading:** Python 3.8 changed how Windows loads DLLs — the system `PATH` is no longer searched by default. The app handles this automatically by calling `os.add_dll_directory()` for the CUDA `bin` directory. You do **not** need to manually add the CUDA `bin` directory to your PATH, but having `CUDA_PATH` set (or the toolkit installed in the default location) is required for auto-detection to work.
+> **Note on Python 3.8+ and DLL loading:** Python 3.8 changed how Windows loads DLLs — the system `PATH` is no longer searched by default. The app handles this automatically by calling `os.add_dll_directory()` for CUDA runtime directories. You do **not** need to manually add CUDA directories to your PATH.
 
-### 3.5 Verify CUDA Setup
+### 3.6 Verify CUDA Setup
 
 ```
 python -c "import ctranslate2; print('CUDA devices:', ctranslate2.get_cuda_device_count())"
 ```
 
-Should print `CUDA devices: 1` (or more). If it prints `0`, the CUDA toolkit or drivers are not installed correctly.
+Should print `CUDA devices: 1` (or more). If it prints `0`, the NVIDIA driver or CUDA runtime dependencies are not installed correctly.
+
+You can also verify the app's own CUDA preflight:
+
+```
+python -c "import transcription_service as ts; ts._register_cuda_dll_dirs(); print('CUDA usable:', ts._cuda_is_available())"
+```
+
+Should print `CUDA usable: True`.
 
 ---
 
@@ -143,7 +180,7 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-This installs `faster-whisper` and its dependencies (including CTranslate2, cuBLAS, and cuDNN Python packages).
+This installs `faster-whisper` and its dependencies, including CTranslate2, cuBLAS, and cuDNN runtime packages used for GPU processing.
 
 ---
 
@@ -220,7 +257,7 @@ If an output file already exists, a numeric suffix is appended automatically (e.
 |---------|-------------|
 | **Device: auto** | Recommended. Uses CUDA if available, falls back to CPU. |
 | **Device: cpu** | Force CPU. Works on all machines. Slower but reliable. |
-| **Device: cuda** | Force CUDA. Requires an NVIDIA GPU with CUDA 12.x + cuDNN 9.x installed. Significantly faster for large files or large models. |
+| **Device: cuda** | Force CUDA. Requires an NVIDIA GPU, current NVIDIA drivers, and the CUDA runtime dependencies from `requirements.txt` or a working CUDA 12.x + cuDNN 9.x system install. Significantly faster for large files or large models. |
 
 **Compute type** controls quantisation:
 
@@ -262,15 +299,16 @@ If you don't have an NVIDIA GPU, leave **Device** and **Compute** on **auto**. T
 **Symptom:** Log shows "CUDA is not usable — falling back to CPU" even though you have an NVIDIA GPU.
 
 **Fix:**
-1. Verify the CUDA Toolkit 12.x is installed: check that `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x\bin\cublas64_12.dll` exists.
-2. Verify cuDNN 9.x is installed: check that `cudnn64_9.dll` (or similar) exists in the CUDA `bin` directory.
-3. Check that `CUDA_PATH` is set: open a terminal and run `echo %CUDA_PATH%`. It should point to your CUDA installation (e.g. `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9`). If not set, add it manually:
+1. Verify the NVIDIA driver sees your GPU: run `nvidia-smi`.
+2. Verify the project dependencies are installed in the active environment: run `pip install -r requirements.txt`.
+3. Verify CTranslate2 sees the GPU: `python -c "import ctranslate2; print(ctranslate2.get_cuda_device_count())"` — should print a number > 0.
+4. Verify the app can load the required CUDA DLLs: `python -c "import transcription_service as ts; ts._register_cuda_dll_dirs(); print(ts._cuda_is_available())"` — should print `True`.
+5. If you use a system CUDA Toolkit install, check that `CUDA_PATH` is set: open a terminal and run `echo %CUDA_PATH%`. It should point to your CUDA installation (e.g. `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9`). If not set, add it manually:
    - Press `Win + R`, type `sysdm.cpl`, press Enter.
    - Go to **Advanced** → **Environment Variables**.
    - Under **User variables**, click **New**.
    - Variable name: `CUDA_PATH`, Value: `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9` (adjust the version to match your install).
-4. Verify CTranslate2 sees the GPU: `python -c "import ctranslate2; print(ctranslate2.get_cuda_device_count())"` — should print a number > 0.
-5. **Restart your IDE/terminal** after installing CUDA or changing environment variables. Environment changes only take effect in new processes.
+6. **Restart your IDE/terminal** after installing drivers, installing CUDA, or changing environment variables. Environment changes only take effect in new processes.
 
 ### Empty transcript / no speech detected
 

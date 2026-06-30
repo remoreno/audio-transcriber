@@ -1,11 +1,13 @@
 """Transcription service wrapping faster-whisper."""
 
 import ctypes
+import importlib.util
 import logging
 import os
 import sys
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 import ctranslate2
 from faster_whisper import WhisperModel
@@ -36,12 +38,13 @@ def _register_cuda_dll_dirs() -> None:
     """Register CUDA Toolkit DLL directories with the Python DLL loader.
 
     Since Python 3.8 on Windows, ``LoadLibraryEx`` no longer searches
-    ``PATH`` for DLLs.  This function discovers the CUDA Toolkit ``bin``
-    directory and calls :func:`os.add_dll_directory` so that libraries
+    ``PATH`` for DLLs.  This function discovers CUDA runtime DLL
+    directories and calls :func:`os.add_dll_directory` so that libraries
     like ``cublas64_12.dll`` are found at runtime.
     """
     if sys.platform != "win32":
         return
+    candidate_dirs: list[Path] = []
     cuda_path = os.environ.get("CUDA_PATH", "")
     if not cuda_path:
         cuda_path = os.environ.get("CUDA_HOME", "")
@@ -57,15 +60,24 @@ def _register_cuda_dll_dirs() -> None:
             cuda12_versions = [v for v in versions if v.startswith('v12.')]
             if cuda12_versions:
                 cuda_path = os.path.join(base, cuda12_versions[0])
-    if not cuda_path:
-        return
-    bin_dir = os.path.join(cuda_path, "bin")
-    if os.path.isdir(bin_dir):
+    if cuda_path:
+        candidate_dirs.append(Path(cuda_path) / "bin")
+
+    candidate_dirs.append(Path(ctranslate2.__file__).resolve().parent)
+
+    nvidia_spec = importlib.util.find_spec("nvidia")
+    if nvidia_spec and nvidia_spec.submodule_search_locations:
+        for root in nvidia_spec.submodule_search_locations:
+            candidate_dirs.extend(Path(root).glob("*/bin"))
+
+    for bin_dir in candidate_dirs:
+        if not bin_dir.is_dir():
+            continue
         try:
-            os.add_dll_directory(bin_dir)
-            logger.debug("Registered CUDA DLL directory: %s", bin_dir)
+            os.add_dll_directory(str(bin_dir))
+            logger.debug("Registered CUDA runtime DLL directory: %s", bin_dir)
         except OSError:
-            logger.debug("Failed to register CUDA DLL directory: %s", bin_dir)
+            logger.debug("Failed to register CUDA runtime DLL directory: %s", bin_dir)
 
 
 def _cuda_is_available() -> bool:
